@@ -1,0 +1,74 @@
+{
+  "T1040": {
+    "technique_id": "T1040",
+    "technique_name": "Network Sniffing",
+    "tactic": "Credential Access, Discovery",
+    "description": "Adversaries may sniff network traffic to capture information, including authentication credentials or sensitive data passed in cleartext over unencrypted WiFi networks.",
+    "url": "https://attack.mitre.org/techniques/T1040/",
+    "detection": "Monitor for promisc/monitor mode interfaces, open WiFi network usage without VPN/TLS encryption, and cleartext protocols.",
+    "mitigation": "Enforce WPA3-Enterprise or WPA2 with 802.1X; mandate full-tunnel VPN with mutual authentication on all untrusted networks."
+  },
+  "T1557": {
+    "technique_id": "T1557",
+    "technique_name": "Adversary-in-the-Middle",
+    "tactic": "Credential Access, Collection",
+    "description": "Adversaries may attempt to position themselves between two or more networked devices to support follow-on behaviors such as network eavesdropping or data manipulation.",
+    "url": "https://attack.mitre.org/techniques/T1557/",
+    "detection": "Detect rogue APs with matching SSIDs, duplicate default gateways, anomalous ARP replies, and rogue DHCP servers.",
+    "mitigation": "Deploy 802.1X network access control with certificate-based EAP-TLS; use static ARP or Dynamic ARP Inspection (DAI); enable DHCP snooping."
+  },
+  "T1557.002": {
+    "technique_id": "T1557.002",
+    "technique_name": "Adversary-in-the-Middle: ARP Poisoning",
+    "tactic": "Credential Access, Collection",
+    "description": "Adversaries may poison Address Resolution Protocol (ARP) caches by sending spoofed ARP gratuitous replies to reroute traffic through an attacker host.",
+    "url": "https://attack.mitre.org/techniques/T1557/002/",
+    "detection": "Monitor for rapid MAC flapping for the default gateway IP, duplicate IP notifications, and unsolicited gratuitous ARP replies.",
+    "mitigation": "Configure static ARP tables for critical gateways; enable Dynamic ARP Inspection (DAI) on managed switches; inspect gateway MAC drift."
+  },
+  "T1565.002": {
+    "technique_id": "T1565.002",
+    "technique_name": "Data Manipulation: Transmitted Data Manipulation",
+    "tactic": "Impact",
+    "description": "Adversaries may alter data in transit, such as forging DNS responses or injecting content into unencrypted HTTP/TCP sessions.",
+    "url": "https://attack.mitre.org/techniques/T1565/002/",
+    "detection": "Compare system resolver answers against DNS-over-HTTPS (DoH) trusted canary resolvers; inspect DNS response TTL and duplicate replies.",
+    "mitigation": "Enforce DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT) with DNSSEC validation; block unencrypted UDP port 53 outbound at boundary."
+  },
+  "T1498.001": {
+    "technique_id": "T1498.001",
+    "technique_name": "Network Denial of Service: Direct Network Flood",
+    "tactic": "Impact",
+    "description": "Adversaries may flood wireless networks with 802.11 Deauthentication or Disassociation frames to force client disconnection and capture 4-way WPA handshakes.",
+    "url": "https://attack.mitre.org/techniques/T1498/001/",
+    "detection": "Detect high-rate 802.11 deauth/disassociation frames (>10 frames/sec) or broadcast deauth frames (FF:FF:FF:FF:FF:FF).",
+    "mitigation": "Deploy 802.11w Protected Management Frames (PMF) on APs and endpoints; mandate WPA3 which requires PMF."
+  },
+  "T1110.002": {
+    "technique_id": "T1110.002",
+    "technique_name": "Brute Force: Password Cracking",
+    "tactic": "Credential Access",
+    "description": "Adversaries may capture EAPOL 4-way handshakes or PMKID elements from wireless beacon/association frames for offline dictionary or brute-force cracking.",
+    "url": "https://attack.mitre.org/techniques/T1110/002/",
+    "detection": "Correlate sudden deauthentication bursts immediately followed by EAPOL handshake frame captures.",
+    "mitigation": "Use complex, high-entropy pre-shared keys (>20 characters) or migrate to 802.1X EAP-TLS with client certificates; disable PMKID caching on legacy APs."
+  },
+  "T1552.001": {
+    "technique_id": "T1552.001",
+    "technique_name": "Unsecured Credentials: Credentials In Files / Cleartext",
+    "tactic": "Credential Access",
+    "description": "Adversaries may harvest authentication credentials transmitted over plaintext protocols (HTTP Basic Auth, FTP, Telnet, POP3, IMAP) over untrusted networks.",
+    "url": "https://attack.mitre.org/techniques/T1552/001/",
+    "detection": "Deep packet inspection for Authorization headers, FTP USER/PASS strings, and unencrypted login signatures.",
+    "mitigation": "Enforce HTTPS/TLS for all corporate services; use HSTS preloading; prohibit cleartext legacy protocols."
+  },
+  "T1562.001": {
+    "technique_id": "T1562.001",
+    "technique_name": "Impair Defenses: Disable or Modify Tools",
+    "tactic": "Defense Evasion",
+    "description": "Adversaries may strip SSL/TLS encryption (SSL stripping, SSLstrip+) or present untrusted self-signed root certificates to intercept secure communications.",
+    "url": "https://attack.mitre.org/techniques/T1562/001/",
+    "detection": "Detect HTTP 302 redirects from HTTPS to HTTP, stripped Strict-Transport-Security headers, or untrusted/drifted TLS certificate fingerprints.",
+    "mitigation": "Enforce HSTS with includeSubDomains and preload lists; pin TLS certificates on native clients; alert on certificate issuer drift."
+  }
+}

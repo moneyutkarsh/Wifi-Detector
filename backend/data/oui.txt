@@ -1,0 +1,119 @@
+# IEEE OUI Prefix database for WiFi Forensic Triage
+# Format: XX:XX:XX Vendor Name
+00:00:0C Cisco Systems, Inc.
+00:01:42 Cisco Systems, Inc.
+00:01:63 Cisco Systems, Inc.
+00:03:93 Apple, Inc.
+00:05:02 Apple, Inc.
+00:0a:95 Apple, Inc.
+00:10:18 Broadcom Limited
+00:10:FA Apple, Inc.
+00:11:24 Apple, Inc.
+00:14:bf Linksys, Cisco Systems
+00:15:6d Ubiquiti Inc.
+00:16:cb Apple, Inc.
+00:17:88 Philips Lighting
+00:17:f2 Apple, Inc.
+00:18:0a Meraki, Inc.
+00:19:07 Cisco Systems, Inc.
+00:1a:11 Google, Inc.
+00:1b:63 Apple, Inc.
+00:1c:b3 Apple, Inc.
+00:1d:7e Cisco Systems, Inc.
+00:1e:c2 Apple, Inc.
+00:21:e9 Apple, Inc.
+00:23:12 Apple, Inc.
+00:24:36 Apple, Inc.
+00:25:00 Apple, Inc.
+00:26:08 Apple, Inc.
+00:26:b9 Apple, Inc.
+00:50:56 VMware, Inc.
+00:0c:29 VMware, Inc.
+08:00:27 PCS Systemtechnik GmbH (VirtualBox)
+00:15:5d Microsoft Corporation (Hyper-V)
+00:16:3e XenSource, Inc.
+18:e8:29 Ubiquiti Inc.
+24:a4:3c Ubiquiti Inc.
+68:d7:9a Ubiquiti Inc.
+70:a7:41 Ubiquiti Inc.
+74:83:c2 Ubiquiti Inc.
+80:2a:a8 Ubiquiti Inc.
+b4:fb:e4 Ubiquiti Inc.
+dc:9f:db Ubiquiti Inc.
+f0:9f:c2 Ubiquiti Inc.
+24:0a:c4 Espressif Systems (Shanghai) Co., Ltd.
+24:6f:28 Espressif Systems (Shanghai) Co., Ltd.
+2c:f4:32 Espressif Systems (Shanghai) Co., Ltd.
+30:ae:a4 Espressif Systems (Shanghai) Co., Ltd.
+84:0d:8e Espressif Systems (Shanghai) Co., Ltd.
+84:f3:eb Espressif Systems (Shanghai) Co., Ltd.
+a0:20:a6 Espressif Systems (Shanghai) Co., Ltd.
+a4:cf:12 Espressif Systems (Shanghai) Co., Ltd.
+b4:e6:2d Espressif Systems (Shanghai) Co., Ltd.
+cc:50:e3 Espressif Systems (Shanghai) Co., Ltd.
+dc:4f:22 Espressif Systems (Shanghai) Co., Ltd.
+b8:27:eb Raspberry Pi Foundation
+dc:a6:32 Raspberry Pi Foundation
+e4:5f:01 Raspberry Pi Foundation
+28:cd:c1 Raspberry Pi Trading Ltd
+d8:3a:dd Raspberry Pi Trading Ltd
+e4:5f:01 Raspberry Pi Trading Ltd
+00:0e:c6 ASUSTek COMPUTER INC.
+04:d9:f5 ASUSTek COMPUTER INC.
+10:bf:48 ASUSTek COMPUTER INC.
+14:dd:a9 ASUSTek COMPUTER INC.
+2c:fd:a1 ASUSTek COMPUTER INC.
+50:46:5d ASUSTek COMPUTER INC.
+74:d0:2b ASUSTek COMPUTER INC.
+00:04:ed B-Link Electronic Co., Ltd.
+00:1d:aa TP-Link Technologies Co., Ltd.
+14:cc:20 TP-Link Technologies Co., Ltd.
+1c:3b:f3 TP-Link Technologies Co., Ltd.
+50:c7:bf TP-Link Technologies Co., Ltd.
+60:e3:27 TP-Link Technologies Co., Ltd.
+70:4f:57 TP-Link Technologies Co., Ltd.
+74:05:a5 TP-Link Technologies Co., Ltd.
+84:16:f9 TP-Link Technologies Co., Ltd.
+90:f6:52 TP-Link Technologies Co., Ltd.
+98:da:c4 TP-Link Technologies Co., Ltd.
+c0:4a:00 TP-Link Technologies Co., Ltd.
+ec:08:6b TP-Link Technologies Co., Ltd.
+f4:f2:6d TP-Link Technologies Co., Ltd.
+00:09:5b NETGEAR
+00:0f:b5 NETGEAR
+00:14:6c NETGEAR
+00:18:4d NETGEAR
+00:1e:2a NETGEAR
+00:24:b2 NETGEAR
+20:e5:2a NETGEAR
+28:80:88 NETGEAR
+84:1b:5e NETGEAR
+a0:04:60 NETGEAR
+00:05:5d D-Link Systems, Inc.
+00:0d:88 D-Link Systems, Inc.
+00:13:46 D-Link Systems, Inc.
+00:17:9a D-Link Systems, Inc.
+00:1c:f0 D-Link Systems, Inc.
+1c:7e:e5 D-Link International
+28:10:7b D-Link International
+34:08:04 D-Link International
+00:13:e8 Intel Corporate
+00:15:00 Intel Corporate
+00:16:ea Intel Corporate
+00:1b:21 Intel Corporate
+00:1e:64 Intel Corporate
+00:21:6a Intel Corporate
+00:24:d7 Intel Corporate
+34:13:e8 Intel Corporate
+3c:fd:fe Intel Corporate
+48:51:b7 Intel Corporate
+5c:87:9c Intel Corporate
+80:86:f2 Intel Corporate
+a4:4c:c8 Intel Corporate
+a8:5e:45 Intel Corporate
+c8:ff:28 Intel Corporate
+f8:63:3f Intel Corporate
+00:1a:2b Ayecom Technology Co., Ltd.
+00:c0:ca Alfa Network Inc.
+00:e0:4c Realtek Semiconductor Corp.
+52:54:00 QEMU / KVM Virtual NIC

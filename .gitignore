@@ -42,3 +42,8 @@ backend/risk_history.db
 
 # Backend secrets
 backend/.env
+
+# Logs and runtime test evidence
+backend/backend_*.txt
+backend/data/evidence/
+*.log

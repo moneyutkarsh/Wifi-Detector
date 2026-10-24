@@ -34,12 +34,28 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # ── Optional heavy imports (Scapy / requests) ──────────────────────────────
-try:
-    from scapy.all import ARP, Ether, srp, sniff, conf as scapy_conf
-    SCAPY_AVAILABLE = True
-except ImportError:
-    SCAPY_AVAILABLE = False
-    logger.warning("Scapy not available — ARP sniffing disabled, using polling fallback.")
+# On Windows, `from scapy.all import ...` can hang indefinitely when Npcap /
+# WinPcap is absent or misconfigured.  We guard with a daemon-thread timeout.
+SCAPY_AVAILABLE = False
+ARP = Ether = srp = sniff = scapy_conf = None  # placeholders
+
+def _try_import_scapy():
+    global SCAPY_AVAILABLE, ARP, Ether, srp, sniff, scapy_conf
+    try:
+        from scapy.all import (  # noqa: PLC0415
+            ARP as _ARP, Ether as _Ether, srp as _srp,
+            sniff as _sniff, conf as _conf,
+        )
+        ARP, Ether, srp, sniff, scapy_conf = _ARP, _Ether, _srp, _sniff, _conf
+        SCAPY_AVAILABLE = True
+    except Exception as exc:
+        logger.warning("Scapy import failed: %s — ARP sniffing disabled.", exc)
+
+_scapy_thread = threading.Thread(target=_try_import_scapy, daemon=True, name="scapy-import")
+_scapy_thread.start()
+_scapy_thread.join(timeout=10)   # wait up to 10 s; give up if Npcap hangs
+if not SCAPY_AVAILABLE:
+    logger.warning("Scapy not available (import timed-out or failed) — ARP sniffing disabled, using polling fallback.")
 
 try:
     import requests as http_requests
@@ -52,6 +68,22 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
+
+try:
+    from events import emit_event
+except ImportError:
+    emit_event = None
+
+try:
+    from enrichment import (
+        HostInventory,
+        DnsDoHValidator,
+        TlsFingerprintValidator,
+        BaselineManager,
+        DeauthDetector,
+    )
+except ImportError:
+    HostInventory = DnsDoHValidator = TlsFingerprintValidator = BaselineManager = DeauthDetector = None
 
 PLATFORM = platform.system()   # "Windows", "Linux", "Darwin"
 
@@ -340,7 +372,21 @@ class WiFiDetector:
         # ── Notifier (injected by app.py) ──
         self.notifier = None
 
+        # ── Active Case Binding (DFIR Layer) ──
+        self.active_case_id: Optional[str] = None
+
+        # ── Enrichment Modules (DFIR Layer) ──
+        self.host_inventory = HostInventory() if HostInventory else None
+        self.doh_validator = DnsDoHValidator() if DnsDoHValidator else None
+        self.tls_validator = TlsFingerprintValidator() if TlsFingerprintValidator else None
+        self.baseline_manager = BaselineManager() if BaselineManager else None
+        self.deauth_detector = DeauthDetector() if DeauthDetector else None
+
     # ── Public API ──────────────────────────────────────────────────────────
+
+    def set_active_case(self, case_id: Optional[str]):
+        """Bind live detection findings to a specific DFIR case."""
+        self.active_case_id = case_id
 
     def set_notifier(self, notifier):
         self.notifier = notifier
@@ -394,11 +440,121 @@ class WiFiDetector:
                 "🧪 [SIM] SSL Stripping: HTTPS request was redirected to HTTP by the "
                 "network — captive portal or MITM stripping TLS."
             ]
+        elif scenario_name == "deauth_flood":
+            self.sim_network_overlay = {}
+            self.sim_risk_score = 75
+            self.sim_alerts = [
+                "🧪 [SIM] 802.11 Deauth Flood: High-rate disassociation frames "
+                "detected (>30 frames/sec). Attacker is forcing client disconnection."
+            ]
+        elif scenario_name == "rogue_dhcp":
+            self.sim_network_overlay = {"dhcp_server": "192.168.1.250 (Rogue)"}
+            self.sim_risk_score = 65
+            self.sim_alerts = [
+                "🧪 [SIM] Rogue DHCP Server: Unauthorized DHCP lease offer received from "
+                "192.168.1.250 offering conflicting gateway/DNS options."
+            ]
         elif scenario_name == "reset":
             self.active_scenario = None
             self.sim_risk_score = 0
             self.sim_alerts = []
             self.sim_network_overlay = {}
+
+        if emit_event:
+            try:
+                if scenario_name == "open":
+                    emit_event(
+                        event_type="OPEN_NETWORK",
+                        severity="MEDIUM",
+                        confidence=1.0,
+                        attack_id="T1040",
+                        source="live",
+                        entities={"encryption": "Open", "ssid": self.current_network.get("ssid", "Simulated_Open_AP")},
+                        raw_ref="simulation:open",
+                        rationale="[SIMULATION] Open unencrypted WiFi network scenario triggered.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+                elif scenario_name == "evil_twin":
+                    emit_event(
+                        event_type="EVIL_TWIN_AP",
+                        severity="HIGH",
+                        confidence=0.85,
+                        attack_id="T1557.002",
+                        source="live",
+                        entities={"ssid": self.current_network.get("ssid", "Corporate_WiFi"), "bssid": "00:DE:AD:BE:EF:00"},
+                        raw_ref="simulation:evil_twin",
+                        rationale="[SIMULATION] Evil Twin AP simulation with cloned SSID and rogue BSSID.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+                elif scenario_name == "mitm":
+                    emit_event(
+                        event_type="ARP_SPOOFING",
+                        severity="HIGH",
+                        confidence=0.90,
+                        attack_id="T1557.002",
+                        source="live",
+                        entities={"gateway_ip": self.current_network.get("gateway_ip", "192.168.1.1"), "gateway_mac": "DE:AD:BE:EF:12:34"},
+                        raw_ref="simulation:mitm",
+                        rationale="[SIMULATION] ARP cache poisoning / gateway MAC change simulation.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+                elif scenario_name == "dns":
+                    emit_event(
+                        event_type="DNS_POISONING",
+                        severity="HIGH",
+                        confidence=0.85,
+                        attack_id="T1557",
+                        source="live",
+                        entities={"dns": "192.168.1.1 (Rogue)", "canary": "google.com"},
+                        raw_ref="simulation:dns",
+                        rationale="[SIMULATION] DNS spoofing / rogue resolver anomaly simulation.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+                elif scenario_name == "ssl":
+                    emit_event(
+                        event_type="SSL_STRIPPING",
+                        severity="CRITICAL",
+                        confidence=0.90,
+                        attack_id="T1557.002",
+                        source="live",
+                        entities={"url": "http://insecure.target.com"},
+                        raw_ref="simulation:ssl",
+                        rationale="[SIMULATION] SSL stripping HTTPS downgrade simulation.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+                elif scenario_name == "deauth_flood":
+                    emit_event(
+                        event_type="DEAUTH_FLOOD",
+                        severity="HIGH",
+                        confidence=1.0,
+                        attack_id="T1498.001",
+                        source="live",
+                        entities={"flood_rate": 65, "bssid": self.current_network.get("bssid", "00:11:22:33:44:55"), "target": "FF:FF:FF:FF:FF:FF"},
+                        raw_ref="simulation:deauth_flood",
+                        rationale="[SIMULATION] High-rate 802.11 management deauthentication frame flood.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+                elif scenario_name == "rogue_dhcp":
+                    emit_event(
+                        event_type="ROGUE_DHCP",
+                        severity="HIGH",
+                        confidence=1.0,
+                        attack_id="T1557",
+                        source="live",
+                        entities={"server_id": "192.168.1.250", "offered_ip": "192.168.1.189", "rogue_gateway": "192.168.1.250"},
+                        raw_ref="simulation:rogue_dhcp",
+                        rationale="[SIMULATION] Secondary rogue DHCP offer detected on local subnet.",
+                        case_id=self.active_case_id,
+                        synthetic=True,
+                    )
+            except Exception as exc:
+                logger.debug("Failed to emit scenario event: %s", exc)
 
     def apply_capture_analysis(self, result: dict, source: str):
         """
@@ -490,6 +646,25 @@ class WiFiDetector:
                 if enc_check["score"] > 0:
                     alerts.append("⚠️ Insecure Network: No encryption detected. "
                                   "Data can be intercepted by anyone on the network.")
+                    if emit_event:
+                        bssid = self.current_network.get("bssid", "")
+                        emit_event(
+                            event_type="OPEN_NETWORK",
+                            severity="MEDIUM",
+                            confidence=1.0,
+                            attack_id="T1040",
+                            source="live",
+                            entities={
+                                "ssid": self.current_network.get("ssid"),
+                                "bssid": bssid,
+                                "encryption": self.current_network.get("encryption"),
+                            },
+                            raw_ref="wlan_profile_query",
+                            rationale="Access Point advertises open / unencrypted 802.11 association. All payload traffic is subject to passive eavesdropping.",
+                            case_id=self.active_case_id,
+                            synthetic=False,
+                            dedup_key=f"live:open_network:{bssid}",
+                        )
 
                 # Check 2 — Evil twin (passive scan)
                 et_check = self._check_evil_twin()
@@ -501,6 +676,25 @@ class WiFiDetector:
                         f"'{self.current_network.get('ssid', '?')}'. "
                         f"Rogue AP may be present. ({et_check.get('detail', '')})"
                     )
+                    if emit_event:
+                        ssid = self.current_network.get("ssid", "")
+                        emit_event(
+                            event_type="EVIL_TWIN_AP",
+                            severity="HIGH",
+                            confidence=0.85,
+                            attack_id="T1557.002",
+                            source="live",
+                            entities={
+                                "ssid": ssid,
+                                "bssid": self.current_network.get("bssid"),
+                                "detail": et_check.get("detail", ""),
+                            },
+                            raw_ref="beacon_survey",
+                            rationale=f"Multiple BSSIDs detected advertising SSID '{ssid}'. Potential rogue AP conducting wireless AitM.",
+                            case_id=self.active_case_id,
+                            synthetic=False,
+                            dedup_key=f"live:evil_twin:{ssid}",
+                        )
 
                 # Check 3 — ARP / MITM (live sniff updates _ip_mac_map;
                 #            polling fallback updates gateway_mac)
@@ -510,6 +704,37 @@ class WiFiDetector:
                 if arp_check["score"] > 0:
                     alerts.append("🔴 ARP Spoofing Detected: Gateway MAC address has "
                                   "changed. A MITM attacker may be intercepting traffic.")
+                    if emit_event:
+                        gw_ip = self.current_network.get("gateway_ip", "")
+                        emit_event(
+                            event_type="ARP_SPOOFING",
+                            severity="HIGH",
+                            confidence=0.90,
+                            attack_id="T1557.002",
+                            source="live",
+                            entities={
+                                "gateway_ip": gw_ip,
+                                "gateway_mac": self.current_network.get("gateway_mac"),
+                                "baseline_mac": self._gateway_mac_baseline,
+                            },
+                            raw_ref="arp_table_lookup",
+                            rationale="Gateway MAC address mismatch or ARP cache poisoning detected. An attacker may be intercepting local traffic.",
+                            case_id=self.active_case_id,
+                            synthetic=False,
+                            dedup_key=f"live:arp_spoof:{gw_ip}",
+                        )
+
+                # Host Inventory recording (DFIR Phase 3)
+                if self.host_inventory:
+                    gw_ip = self.current_network.get("gateway_ip", "")
+                    gw_mac = self.current_network.get("gateway_mac", "")
+                    if gw_mac and gw_mac not in ("Unknown", "Scanning..."):
+                        self.host_inventory.record_host(
+                            mac=gw_mac,
+                            ip=gw_ip if gw_ip not in ("Unknown", "Scanning...") else "",
+                            is_gateway=True,
+                            case_id=self.active_case_id,
+                        )
 
                 # Checks 4 & 5 run every ~30 s (every 10th cycle at 3 s interval)
                 self._slow_check_counter += 1
@@ -524,6 +749,20 @@ class WiFiDetector:
                             "outside expected ranges — possible DNS spoofing or rogue "
                             "resolver. (" + dns_check.get("detail", "") + ")"
                         )
+                        if emit_event:
+                            emit_event(
+                                event_type="DNS_POISONING",
+                                severity="HIGH",
+                                confidence=0.85,
+                                attack_id="T1557",
+                                source="live",
+                                entities={"canary": "google.com", "detail": dns_check.get("detail", "")},
+                                raw_ref="dns_canary_lookup",
+                                rationale="Authoritative canary domain resolved outside expected CIDR ranges, indicating DNS spoofing or a rogue recursive resolver.",
+                                case_id=self.active_case_id,
+                                synthetic=False,
+                                dedup_key="live:dns_spoof",
+                            )
 
                     ssl_check = self._check_ssl_strip()
                     self.check_results["ssl_strip"] = ssl_check
@@ -533,6 +772,39 @@ class WiFiDetector:
                             "downgraded. Possible SSL stripping or captive portal. "
                             "(" + ssl_check.get("detail", "") + ")"
                         )
+                        if emit_event:
+                            emit_event(
+                                event_type="SSL_STRIPPING",
+                                severity="CRITICAL",
+                                confidence=0.90,
+                                attack_id="T1557.002",
+                                source="live",
+                                entities={"url": "https://www.google.com", "detail": ssl_check.get("detail", "")},
+                                raw_ref="https_canary_probe",
+                                rationale="HTTPS connectivity probe failed or returned unexpected HTTP redirect, indicative of SSL stripping or captive portal interception.",
+                                case_id=self.active_case_id,
+                                synthetic=False,
+                                dedup_key="live:ssl_strip",
+                            )
+
+                    # ── DFIR Phase 3 Enriched Slow Checks ──
+                    if self.baseline_manager:
+                        ssid = self.current_network.get("ssid", "")
+                        bssid = self.current_network.get("bssid", "")
+                        sec = self.current_network.get("encryption", "")
+                        if ssid and bssid and bssid not in ("Unknown", "Scanning..."):
+                            self.baseline_manager.evaluate_ap(
+                                ssid=ssid,
+                                bssid=bssid,
+                                security_type=sec,
+                                case_id=self.active_case_id,
+                            )
+
+                    if self.doh_validator:
+                        self.doh_validator.check_canaries(case_id=self.active_case_id)
+
+                    if self.tls_validator:
+                        self.tls_validator.check_tls_canaries(case_id=self.active_case_id)
 
                 # Accumulate DNS/SSL scores from stored results
                 score += self.check_results["dns_spoof"]["score"]
@@ -783,3 +1055,12 @@ class WiFiDetector:
                     sender_ip, existing_mac, sender_mac
                 )
             self._ip_mac_map[sender_ip] = sender_mac
+
+            if self.host_inventory:
+                gw_ip = self.current_network.get("gateway_ip", "")
+                self.host_inventory.record_host(
+                    mac=sender_mac,
+                    ip=sender_ip,
+                    is_gateway=(sender_ip == gw_ip),
+                    case_id=self.active_case_id,
+                )

@@ -138,33 +138,87 @@ Access the **🧪 Lab Simulation Panel** at the bottom of the dashboard.
 | **ARP Spoof/MITM** | Gateway MAC hijacking |
 | **DNS Spoof** | Rogue DNS resolver attack |
 | **SSL Strip** | HTTPS downgrade attack |
+| **Deauth Flood** | 802.11 management frame deauthentication burst (+75 Risk, MITRE T1498.001) |
+| **Rogue DHCP** | Rogue DHCP server offering unauthorized gateway lease (+65 Risk, MITRE T1557) |
 
 To trigger programmatically (requires the API token in the `X-API-Token` header):
 ```bash
 curl -X POST http://localhost:5000/api/scenario \
   -H "Content-Type: application/json" \
   -H "X-API-Token: YOUR_TOKEN_HERE" \
-  -d '{"scenario": "evil_twin"}'
+  -d '{"scenario": "deauth_flood"}'
 ```
+
+### Real Lab Setups for Advanced Scenarios (Kali Linux)
+
+#### Scenario A — Deauthentication Flood (`T1498.001`)
+Put your wireless interface in monitor mode:
+```bash
+sudo airmon-ng start wlan0
+sudo aireplay-ng --deauth 50 -a <Target_AP_BSSID> -c <Target_Client_MAC> wlan0mon
+```
+*Detector response*: Flags sliding-window management frame anomaly, classifies vendor of spoofed sender, and creates an alert event in the Live Triage feed.
+
+#### Scenario B — Rogue DHCP Server (`T1557`)
+Spin up an unauthorized DHCP server on the same subnet:
+```bash
+sudo dnsmasq -d -C rogue_dhcp.conf --dhcp-range=192.168.1.100,192.168.1.150,255.255.255.0,1h --dhcp-option=3,192.168.1.254
+```
+*Detector response*: Compares the offering DHCP server IP against the discovered gateway baseline, flagging any unauthorized DHCP server as a rogue infrastructure threat.
 
 ---
 
-## 6. SQLite History & API
+## 6. DFIR Case Investigation Workflow
+
+1. **Initialize Case**:
+   - Navigate to the UI and click **+ New Case**.
+   - Input the **Title**, **Lead Examiner Name**, and **Authorization / Warrant Reference** (e.g. `CASE-2026-WIFI-001`).
+   - Check the **Synthetic / Training Environment** toggle if conducting simulation drills.
+2. **Review Live Triage & Super-Timeline**:
+   - Observe live incoming events over the SSE stream (`/api/stream`).
+   - Expand any event drawer to inspect raw telemetry, packet decodes, and evidentiary rationale.
+   - Annotate key investigative moments in the **Timeline** tab.
+3. **Artifact Registration & Chain of Custody**:
+   - In the **Evidence & Custody** tab, upload captured PCAPs or airodump-ng CSVs.
+   - Each artifact is immediately stamped with **Dual Cryptographic Hashes** (SHA-256 and MD5) and recorded into the sequential custody ledger.
+   - Click **Verify Integrity** to run the cryptographic tamper detection audit.
+4. **MITRE ATT&CK® & Threat Intelligence**:
+   - Switch to the **ATT&CK Matrix** tab to visualize covered attack techniques and tactic progression.
+   - Review the **IOCs** tab to examine mined MAC addresses, BSSIDs, rogue IPs, and export a standardized **STIX 2.1 Threat Report**.
+5. **Generate Self-Verifying Forensic Incident Report**:
+   - Navigate to the **Reports** tab and click **Generate Forensic Report**.
+   - Inspect the compiled HTML investigation report containing the executive summary, evidence catalog, custody ledger, and mitigation actions.
+   - Download the verified `.html` report file.
+6. **Freeze Case**:
+   - In the top `CaseBar`, click **Freeze Case**. The case transitions to `FROZEN`, locking all evidence and ledger logs against modifications for court defensibility.
+
+---
+
+## 7. SQLite History & API
 
 Risk events are logged to `backend/risk_history.db` every ~15 seconds.
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/status` | Live status, check results, sim state |
-| `GET /api/history?limit=100` | Last N risk events from SQLite |
-| `GET /api/stats` | 24-hour aggregate (max, avg, high-risk count) |
-| `GET /api/config` | Current notification / sniff config |
-| `POST /api/config` *(token required)* | Update webhook URL, notification interval |
-| `POST /api/scenario` *(token required)* | Trigger or reset a simulation scenario |
+| Endpoint | Method | Description |
+|---|---|---|
+| `GET /api/status` | GET | Live status, check results, sim state |
+| `GET /api/history?limit=100` | GET | Last N risk events from SQLite |
+| `GET /api/stats` | GET | 24-hour aggregate (max, avg, high-risk count) |
+| `GET /api/config` | GET | Current notification / sniff config |
+| `POST /api/config` | POST | Update webhook URL, notification interval *(token required)* |
+| `POST /api/scenario` | POST | Trigger or reset a simulation scenario *(token required)* |
+| `GET /api/cases` | GET | List all investigative cases |
+| `POST /api/cases` | POST | Create new case with warrant ref *(token required)* |
+| `GET /api/cases/<id>/custody` | GET | Retrieve hash-chained custody ledger |
+| `GET /api/cases/<id>/custody/verify` | GET | Cryptographic ledger tamper verification |
+| `POST /api/cases/<id>/evidence` | POST | Ingest artifact with dual hashing *(token required)* |
+| `GET /api/cases/<id>/reports` | GET | List generated forensic reports |
+| `POST /api/cases/<id>/reports` | POST | Generate self-verifying report *(token required)* |
+| `GET /api/reports/<id>/download` | GET | Download signed HTML report |
+| `GET /api/cases/<id>/stix2` | GET | Export STIX 2.1 Threat Report bundle |
 
 ---
 
-## 7. Real Alerting
+## 8. Real Alerting
 
 ### Desktop Notifications
 Fires automatically when risk crosses a threshold zone (30, 60, 90) or jumps ≥10 points. Powered by `plyer` — no configuration needed.
@@ -185,6 +239,7 @@ ALERT_WEBHOOK_URL=https://... python app.py
 
 ---
 
-## 8. Academic Disclaimer
+## 9. Academic Disclaimer
 
-All experiments must be conducted in an **isolated lab environment** using networks and devices you own or have explicit permission to test. Unauthorised network access is illegal and unethical. This tool is built for **detection education and VAPT training** only.
+All experiments must be conducted in an **isolated lab environment** using networks and devices you own or have explicit permission to test. Unauthorized network access is illegal and unethical. This tool is built for **detection education, incident response training, and network forensics research** only.
+

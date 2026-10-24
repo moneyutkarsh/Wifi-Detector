@@ -1,24 +1,51 @@
-# Public WiFi Risk Detector 🛡️📡
+# Public WiFi Risk Detector & DFIR Platform 🛡️📡
 
-An educational and active security tool designed to monitor local network environments for common Public WiFi vulnerabilities, attacks, and anomalies. It features both a real-world **Live Detection Mode** (with passive scanning, ARP sniffing, and active TLS/DNS probes) and an interactive **Simulation Mode** for teaching and demonstration purposes.
+An active wireless threat detection engine and research-grade **Digital Forensics & Incident Response (DFIR)** platform designed for SOC analysts, incident responders, and network security researchers.
+
+The platform continuously monitors wireless interfaces for threats, collects volatile forensic snapshots per **RFC 3227**, manages investigative cases with a **cryptographic hash-chained chain of custody ledger**, maps telemetry to **MITRE ATT&CK®**, correlates multi-stage attacks, exports threat intelligence in **STIX 2.1**, and generates **self-verifying forensic investigation reports**.
 
 ---
 
-## 🚀 Key Features
+## 🚀 Key Capabilities
 
+### 1. Wireless Detection Engine
 *   **Dual Mode Architecture**:
-    *   🟢 **Live Detection Mode**: Actively monitors the network using low-level sniffing and API checks to calculate a real-time risk score (`live_risk_score`).
-    *   🟡 **Simulation Mode**: Injects educational demo data to simulate various WiFi attacks without disabling background live checks.
-*   **Live Detection Capabilities**:
-    *   **Open Network Detection (+40 Risk)**: Alerts on unencrypted/open Wi-Fi connections.
-    *   **Evil Twin Detection (+35 Risk)**: Scans for duplicate SSIDs with different BSSIDs using native tools (no monitor mode required).
-    *   **ARP Spoofing & MITM Protection (+50 Risk)**: Uses a live Scapy ARP sniffer to detect MAC changes for known IPs, with automatic polling fallback.
-    *   **DNS Spoofing Audit (+30 Risk)**: Resolves hostnames and validates results against trusted IP ranges (Google, Cloudflare, etc.).
-    *   **SSL Stripping & Captive Portal Detection (+40 Risk)**: Probes connectivity endpoints to find HTTPS downgrades, captive portals, or TLS certificate manipulation.
-*   **Alerter Engine**:
-    *   **Desktop Alerts**: Cross-platform notifications (powered by `plyer`) triggered by risk score transitions or sudden risk jumps.
-    *   **Webhook Support**: Push notifications directly to Discord, Slack, or any custom listener.
-*   **Visual Control Panel**: A modern React-based user interface displaying current risks, alert history, statistics, and a simulation laboratory dashboard.
+    *   🟢 **Live Detection Layer**: Real-time passive packet sniffing, ARP verification, TLS canary probing, and DNS cross-validation calculating an objective `live_risk_score` (0–100).
+    *   🟡 **Educational / Simulation Mode**: Injects reproducible threat scenarios (`evil_twin`, `arp_spoof`, `dns_spoof`, `ssl_strip`, `deauth_flood`, `rogue_dhcp`) without interrupting live background sensors.
+*   **Active Threat Checks**:
+    *   **Open Network (+40 Risk)**: Detects unencrypted 802.11 associations.
+    *   **Evil Twin (+35 Risk)**: Scans for duplicate SSIDs across disparate BSSIDs and signal disparities without requiring monitor mode.
+    *   **ARP Poisoning / MITM (+50 Risk)**: Real-time Scapy ARP packet sniffing with gateway MAC baseline drift detection.
+    *   **DNS Hijacking & Spoofing (+30 Risk)**: High-speed DNS probe cross-referenced with encrypted DNS-over-HTTPS (DoH) trusted resolvers.
+    *   **SSL Stripping & Captive Portals (+40 Risk)**: Probes TLS canary endpoints, detects cleartext redirects and certificate fingerprint anomalies.
+    *   **Deauthentication Flooding (+75 Risk)**: Detects 802.11 management frame floods (`T1498.001`) via sliding-window burst counters.
+    *   **Rogue DHCP Servers (+65 Risk)**: Identifies unauthorized DHCP OFFERs and rogue gateway assignments (`T1557`).
+
+### 2. DFIR & Forensic Investigation Layer
+*   **Case Management & Scope Enforcement**:
+    *   Mandatory warrant/authorization tracking (`authorization_ref`), examiner signoff, and immutable case states (`OPEN` $\to$ `FROZEN` $\to$ `CLOSED`).
+*   **RFC 3227 Chain of Custody**:
+    *   Sequential block ledger linking every evidence ingestion and action with `prev_hash` $\to$ `entry_hash` (SHA-256).
+    *   Cryptographic tamper detection (`verify_custody_chain`) detects any post-facto ledger alteration.
+    *   Strict order-of-volatility live snapshot collector (registers, ARP tables, routing entries, interface statistics).
+*   **Evidence & PCAP Processing**:
+    *   Dual-hash ingest (SHA-256 + MD5) on all uploaded or captured artifacts.
+    *   Automatic PII & cleartext credential redaction for sensitive forensic captures.
+    *   Streaming PCAP reader parsing and Airodump-NG CSV ingestion.
+*   **Unified Events & Live Triage**:
+    *   Standardized event schema with Server-Sent Events (SSE) live streaming (`/api/stream`).
+    *   Event deduplication and watermarking for synthetic training data (`synthetic=true`).
+*   **Threat Intel & MITRE ATT&CK®**:
+    *   OUI hardware vendor resolution via IEEE registry lookups.
+    *   Interactive ATT&CK Matrix navigator with confidence-rated tactic and technique coverage.
+    *   Automated IOC mining (MACs, IPs, SSIDs, BSSIDs) and STIX 2.1 Threat Report bundle exporter.
+*   **Automated Multi-Stage Attack Correlation**:
+    *   Rule 1: *Deauth $\to$ Evil Twin Reconnection* (Credential Phishing).
+    *   Rule 2: *ARP Poisoning $\to$ DNS Hijack / TLS Downgrade* (Active Traffic Interception).
+    *   Rule 3: *Rogue DHCP Offer $\to$ Captive Portal Harvest* (Rogue Infrastructure).
+*   **Self-Verifying Forensic Reports**:
+    *   One-click HTML report generation complete with executive summary, evidence catalog, custody ledger, findings matrix, and containment signoff.
+    *   Document integrity anchored to the case custody ledger with SHA-256 verification.
 
 ---
 
@@ -27,98 +54,92 @@ An educational and active security tool designed to monitor local network enviro
 ```
 public-wifi-risk-detector/
 ├── backend/
-│   ├── app.py                  # Flask API server & main entrypoint
-│   ├── detector.py             # Active & passive network monitoring engine
-│   ├── capture_analyzer.py     # Live packet sniffer (Scapy-based ARP spoof detection)
+│   ├── app.py                  # Flask API server, SSE streaming & REST routes
+│   ├── detector.py             # Active/passive WiFi sensor & scenario engine
+│   ├── capture_analyzer.py     # Live Scapy sniffer & PCAP stream analyzer
+│   ├── cases.py                # Case lifecycle, scoping & state transitions
+│   ├── custody.py              # RFC 3227 custody ledger & SHA-256 verification
+│   ├── events.py               # Unified forensic telemetry & SSE pub/sub
+│   ├── enrichment.py           # OUI, DoH, TLS canary & deauth baseline sensors
+│   ├── collectors.py           # RFC 3227 volatile system snapshot collector
+│   ├── timeline.py             # Super-timeline generation & analyst notes
+│   ├── intel.py                # MITRE ATT&CK mapper, IOC miner & STIX 2.1 exporter
+│   ├── reporter.py             # Forensic report generator & verification
 │   ├── notifier.py             # Desktop (plyer) & webhook alerting
-│   ├── db.py                   # SQLite history storage (risk_history.db)
-│   ├── requirements.txt        # Python dependency list
-│   └── .env                    # Auto-generated API key & configuration
+│   ├── db.py                   # SQLite WAL database & migration manager
+│   ├── data/
+│   │   ├── attack_map.json     # Curated MITRE ATT&CK mapping definitions
+│   │   └── oui.txt             # IEEE OUI hardware vendor database
+│   ├── tests/                  # Pytest test suite (31/31 unit & integration tests)
+│   └── requirements.txt        # Python dependency manifest
 ├── frontend/
-│   ├── src/                    # React frontend source code
-│   ├── index.html              # Frontend page shell
-│   ├── package.json            # NPM script & dependency definitions
-│   └── .env                    # Shared API token config
-└── LAB_GUIDE.md                # Detailed guide for setting up attack scenarios
+│   ├── src/
+│   │   ├── components/         # Modular DFIR React components
+│   │   │   ├── CaseBar.jsx     # Active case indicator & freeze controls
+│   │   │   ├── NewCaseModal.jsx# Case creation with warrant reference
+│   │   │   ├── LiveTriage.jsx  # Real-time SSE telemetry & quick filter
+│   │   │   ├── TimelineView.jsx# Interactive chronological super-timeline
+│   │   │   ├── EvidencePanel.jsx# Custody ledger & artifact vault
+│   │   │   ├── IocTable.jsx    # Mined IOCs & STIX 2.1 download
+│   │   │   ├── AttackMatrix.jsx# MITRE ATT&CK matrix coverage
+│   │   │   └── ReportsPanel.jsx# Forensic report generation & preview
+│   │   ├── App.jsx             # Main dashboard & tab routing
+│   │   └── index.css           # Custom dark glassmorphic styling
+│   └── package.json            # Node.js manifest
+├── DFIR_METHODOLOGY.md         # Comprehensive DFIR technical methodology guide
+└── LAB_GUIDE.md                # Attack scenario setup & Kali lab instructions
 ```
 
 ---
 
-## 🛠️ Prerequisites
+## 🛠️ Prerequisites & Installation
 
-### General Requirements
+### Requirements
 *   **Python**: Version $\ge$ 3.9
 *   **Node.js**: Version $\ge$ 18
-
-### Platform-Specific Setup
-
-#### Windows
-*   **Npcap**: Install [Npcap](https://npcap.com/) for Scapy packet capturing.
-*   **Permissions**: Run the backend **as Administrator** to enable raw Scapy ARP sniffing (`sniff()`). If run without admin rights, the backend automatically falls back to polling-based ARP verification.
-
-#### Linux
-*   **Dependencies**: Ensure utilities like `iproute2`, `iw`, and `nmcli` are installed.
-*   **Permissions**: Run the backend using `sudo`, or grant capabilities:
-    ```bash
-    sudo setcap cap_net_raw+eip $(which python3)
-    ```
-
-#### macOS
-*   **Dependencies**: Uses the built-in `airport` utility.
-*   **Permissions**: Run with `sudo` for live Scapy sniffing.
-
----
-
-## ⚙️ Installation & Running the Project
+*   **Npcap / Libpcap**: [Npcap](https://npcap.com/) on Windows (install with WinPcap API-compatible mode).
 
 ### 1. Backend Setup
-1.  Navigate to the `backend` directory:
-    ```bash
-    cd backend
-    ```
-2.  Install Python dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  Start the Flask server:
-    ```bash
-    python app.py
-    ```
-    *   *Note: On its very first run, the backend will auto-generate an API key and print it in the console.*
-    *   *Example Output:*
-        ```text
-        Generated new API token: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-        Saved to backend/.env
-        Set VITE_API_TOKEN=<token> in frontend/.env
-        ```
+```bash
+cd backend
+pip install -r requirements.txt
+python app.py
+```
+*On first startup, the backend generates an API token in `backend/.env` and prints it to the console.*
 
 ### 2. Frontend Setup
-1.  Navigate to the `frontend` directory:
-    ```bash
-    cd frontend
-    ```
-2.  Install NPM dependencies:
-    ```bash
-    npm install
-    ```
-3.  Create a `.env` file inside the `frontend/` directory and configure the API token generated by the backend:
-    ```env
-    VITE_API_TOKEN=your-generated-token-here
-    ```
-4.  Start the React dev server:
-    ```bash
-    npm run dev
-    ```
-5.  Open [http://localhost:5173](http://localhost:5173) in your browser.
+```bash
+cd frontend
+npm install
+```
+Create `frontend/.env`:
+```env
+VITE_API_TOKEN=your-generated-token-here
+```
+Start the frontend development server:
+```bash
+npm run dev
+```
+Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 🧪 Educational Simulations & Labs
+## 🧪 Automated Testing
 
-For details on how to set up active demonstrations (like launching an Evil Twin AP or performing ARP spoofing in a sandbox/Kali environment) and configuring test payloads, refer to the full [LAB_GUIDE.md](file:///c:/Users/sneha/public_wifi/public-wifi-risk-detector/LAB_GUIDE.md).
+The repository includes a comprehensive 31-test suite validating all 7 phases:
+```bash
+pytest backend/tests -v
+```
 
 ---
 
-## ⚠️ Academic Disclaimer
+## 📖 Documentation
 
-All experiments and live scans must be conducted strictly inside an **isolated lab environment** using networks and devices that you own or have explicit permission to test. Unauthorized network access, packet sniffing, or wireless disruption is illegal and unethical. This software is built purely for **academic demonstration, network defense education, and VAPT training**.
+*   [DFIR_METHODOLOGY.md](DFIR_METHODOLOGY.md) — Comprehensive technical guide detailing the evidentiary chain of custody, RFC 3227 order of volatility, MITRE ATT&CK mapping, and reporting defensibility.
+*   [LAB_GUIDE.md](LAB_GUIDE.md) — Step-by-step instructions for recreating realistic Wi-Fi attack scenarios (Evil Twin, Deauth Flooding, Rogue DHCP, ARP Spoofing) using Kali Linux tools in an isolated sandbox.
+
+---
+
+## ⚠️ Academic & Legal Disclaimer
+
+All experiments, scans, and simulated attacks must be conducted strictly within an **authorized, isolated lab environment** using networks and devices owned by the researcher or with explicit written legal authorization. Unauthorized packet capturing, radio jamming, or wireless disruption is illegal. This software is engineered strictly for **defensive digital forensics, incident response research, and network security education**.

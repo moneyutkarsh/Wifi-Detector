@@ -15,16 +15,22 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "risk_history.db")
 
 
 def get_connection():
-    """Return a thread-safe SQLite connection."""
+    """Return a thread-safe SQLite connection with WAL mode and foreign keys enabled."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
+get_db_connection = get_connection
+
+
 def init_db():
-    """Create the risk_events table if it does not already exist."""
+    """Create all core tables if they do not already exist."""
     conn = get_connection()
     try:
+        # 1. Existing risk_events table (preserved unmodified)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS risk_events (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,10 +45,160 @@ def init_db():
                 encryption     TEXT    NOT NULL DEFAULT ''
             )
         """)
-        # Index on epoch for fast range queries
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_epoch ON risk_events (epoch)
         """)
+
+        # 2. DFIR Cases table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cases (
+                case_id           TEXT PRIMARY KEY,
+                title             TEXT NOT NULL,
+                examiner          TEXT NOT NULL,
+                authorization_ref TEXT NOT NULL,
+                status            TEXT NOT NULL DEFAULT 'Open',
+                created_utc       TEXT NOT NULL,
+                closed_utc        TEXT,
+                notes             TEXT NOT NULL DEFAULT '',
+                manifest_hash     TEXT,
+                synthetic         INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status)")
+
+        # 3. Evidence items table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS evidence (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id           TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                stored_filename   TEXT NOT NULL,
+                stored_path       TEXT NOT NULL,
+                size_bytes        INTEGER NOT NULL,
+                sha256            TEXT NOT NULL,
+                md5               TEXT NOT NULL,
+                ingest_utc        TEXT NOT NULL,
+                source            TEXT NOT NULL DEFAULT 'upload',
+                metadata_json     TEXT NOT NULL DEFAULT '{}',
+                synthetic         INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (case_id) REFERENCES cases (case_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_case ON evidence (case_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_sha256 ON evidence (sha256)")
+
+        # 4. Chain of Custody (append-only hash chain)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS custody_log (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id       TEXT NOT NULL,
+                evidence_id   INTEGER,
+                ts_utc        TEXT NOT NULL,
+                actor         TEXT NOT NULL,
+                action        TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL DEFAULT '',
+                prev_hash     TEXT NOT NULL,
+                entry_hash    TEXT NOT NULL,
+                tool_version  TEXT NOT NULL,
+                details_json  TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (case_id) REFERENCES cases (case_id),
+                FOREIGN KEY (evidence_id) REFERENCES evidence (id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_custody_case ON custody_log (case_id)")
+
+        # 5. Unified Event Schema (pre-created for Phase 2+)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id          TEXT PRIMARY KEY,
+                case_id     TEXT,
+                ts_utc      TEXT NOT NULL,
+                epoch       REAL NOT NULL,
+                source      TEXT NOT NULL,
+                type        TEXT NOT NULL,
+                severity    TEXT NOT NULL,
+                confidence  REAL NOT NULL DEFAULT 1.0,
+                attack_id   TEXT NOT NULL DEFAULT '',
+                entities    TEXT NOT NULL DEFAULT '{}',
+                raw_ref     TEXT NOT NULL DEFAULT '',
+                rationale   TEXT NOT NULL DEFAULT '',
+                synthetic   INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (case_id) REFERENCES cases (case_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts_utc)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_case ON events (case_id)")
+
+        # 6. IOCs table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS iocs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id     TEXT,
+                ioc_type    TEXT NOT NULL,
+                ioc_value   TEXT NOT NULL,
+                first_seen  TEXT NOT NULL,
+                last_seen   TEXT NOT NULL,
+                count       INTEGER NOT NULL DEFAULT 1,
+                metadata    TEXT NOT NULL DEFAULT '{}',
+                synthetic   INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (case_id) REFERENCES cases (case_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_iocs_val ON iocs (ioc_value)")
+
+        # 7. Hosts table (inventory & baseline drift)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS hosts (
+                mac         TEXT PRIMARY KEY,
+                ip          TEXT NOT NULL DEFAULT '',
+                hostname    TEXT NOT NULL DEFAULT '',
+                vendor      TEXT NOT NULL DEFAULT '',
+                first_seen  TEXT NOT NULL,
+                last_seen   TEXT NOT NULL,
+                is_gateway  INTEGER NOT NULL DEFAULT 0,
+                is_trusted  INTEGER NOT NULL DEFAULT 0,
+                notes       TEXT NOT NULL DEFAULT ''
+            )
+        """)
+
+        # 8. Baselines table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS baselines (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                ssid          TEXT NOT NULL,
+                bssid         TEXT NOT NULL,
+                channel       INTEGER,
+                security_type TEXT NOT NULL DEFAULT '',
+                created_utc   TEXT NOT NULL,
+                approved_by   TEXT NOT NULL DEFAULT '',
+                fingerprint   TEXT NOT NULL DEFAULT ''
+            )
+        """)
+
+        # 9. Notes & Reports tables
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id     TEXT NOT NULL,
+                ts_utc      TEXT NOT NULL,
+                author      TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES cases (case_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id     TEXT NOT NULL,
+                created_utc TEXT NOT NULL,
+                generator   TEXT NOT NULL,
+                format      TEXT NOT NULL DEFAULT 'html',
+                sha256      TEXT NOT NULL,
+                content     BLOB,
+                FOREIGN KEY (case_id) REFERENCES cases (case_id)
+            )
+        """)
+
         conn.commit()
     finally:
         conn.close()

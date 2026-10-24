@@ -2,11 +2,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, ShieldAlert, Wifi, Activity, RefreshCw,
   FlaskConical, Radio, AlertTriangle, CheckCircle2,
-  Bell, Settings, Clock
+  Bell, Settings, Clock, ShieldCheck
 } from 'lucide-react';
 import './index.css';
 import RiskChart from './RiskChart';
 import { CheckGrid } from './CheckBadge';
+
+// DFIR Forensic UI Components
+import CaseBar from './components/CaseBar';
+import NewCaseModal from './components/NewCaseModal';
+import FindingsSummary from './components/FindingsSummary';
+import LiveTriage from './components/LiveTriage';
+import TimelineView from './components/TimelineView';
+import EvidencePanel from './components/EvidencePanel';
+import IocTable from './components/IocTable';
+import AttackMatrix from './components/AttackMatrix';
+import ReportsPanel from './components/ReportsPanel';
 
 const API_BASE = 'http://localhost:5000';
 // The API token is injected via the Vite env system.
@@ -206,11 +217,13 @@ function AlertsPanel({ liveAlerts, simAlerts }) {
 
 function SimPanel({ activeScenario, onTrigger }) {
   const scenarios = [
-    { id: 'open',       label: 'Open WiFi',      desc: 'No encryption' },
-    { id: 'evil_twin',  label: 'Evil Twin AP',   desc: 'Rogue BSSID' },
-    { id: 'mitm',       label: 'ARP Spoof/MITM', desc: 'MAC hijack' },
-    { id: 'dns',        label: 'DNS Spoof',       desc: 'Rogue resolver' },
-    { id: 'ssl',        label: 'SSL Strip',       desc: 'HTTPS downgrade' },
+    { id: 'open',         label: 'Open WiFi',        desc: 'No encryption' },
+    { id: 'evil_twin',    label: 'Evil Twin AP',     desc: 'Rogue BSSID' },
+    { id: 'mitm',         label: 'ARP Spoof/MITM',   desc: 'MAC hijack' },
+    { id: 'dns',          label: 'DNS Spoof',        desc: 'Rogue resolver' },
+    { id: 'ssl',          label: 'SSL Strip',        desc: 'HTTPS downgrade' },
+    { id: 'deauth_flood', label: 'Deauth Flood',     desc: '802.11 frame flood' },
+    { id: 'rogue_dhcp',   label: 'Rogue DHCP',       desc: 'Conflicting leases' },
   ];
 
   return (
@@ -309,6 +322,15 @@ export default function App() {
   const [analyzing, setAnalyzing] = useState(false);
   const [uploadError, setUploadError] = useState(null);
 
+  // ── DFIR State ──
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [cases, setCases] = useState([]);
+  const [activeCase, setActiveCase] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [isNewCaseModalOpen, setIsNewCaseModalOpen] = useState(false);
+  const [isCollectingSnapshot, setIsCollectingSnapshot] = useState(false);
+  const [isVerifyingIntegrity, setIsVerifyingIntegrity] = useState(false);
+
   const handleFileUpload = async (event, endpoint) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -318,6 +340,9 @@ export default function App() {
 
     const formData = new FormData();
     formData.append('file', file);
+    if (activeCase) {
+      formData.append('case_id', activeCase.case_id);
+    }
 
     try {
       const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -336,6 +361,7 @@ export default function App() {
       await fetchStatus();
       await fetchHistory();
       await fetchStats();
+      await fetchEvents();
     } catch (e) {
       console.error('Upload failed:', e);
       setUploadError(e.message || 'Failed to analyze capture file.');
@@ -379,20 +405,58 @@ export default function App() {
     }
   };
 
+  const fetchCases = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/cases`);
+      if (res.ok) {
+        const json = await res.json();
+        const caseList = json.cases || [];
+        setCases(caseList);
+        setActiveCase((prev) => {
+          if (prev && caseList.some((c) => c.case_id === prev.case_id)) {
+            return caseList.find((c) => c.case_id === prev.case_id);
+          }
+          return caseList.find((c) => c.status !== 'Closed') || caseList[0] || null;
+        });
+      }
+    } catch (e) {
+      console.error('Failed to fetch cases:', e);
+    }
+  };
+
+  const fetchEvents = async () => {
+    try {
+      const url = activeCase
+        ? `${API_BASE}/api/events?case_id=${activeCase.case_id}&limit=50`
+        : `${API_BASE}/api/events?limit=50`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        setEvents(json.events || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch events:', e);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
     fetchHistory();
     fetchStats();
+    fetchCases();
+    fetchEvents();
 
     const statusInterval  = setInterval(fetchStatus, 3000);
     const historyInterval = setInterval(fetchHistory, 15000);
     const statsInterval   = setInterval(fetchStats, 30000);
+    const eventsInterval  = setInterval(fetchEvents, 6000);
     return () => {
       clearInterval(statusInterval);
       clearInterval(historyInterval);
       clearInterval(statsInterval);
+      clearInterval(eventsInterval);
     };
-  }, []);
+  }, [activeCase]);
 
   // ── Scenario trigger ──
   const triggerScenario = async (scenario) => {
@@ -407,8 +471,65 @@ export default function App() {
         return;
       }
       await fetchStatus();
+      await fetchEvents();
     } catch (e) {
       console.error('Scenario error:', e);
+    }
+  };
+
+  // ── Case Handlers ──
+  const handleCreateCase = async (caseData) => {
+    const res = await fetch(`${API_BASE}/api/cases`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(caseData),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || 'Failed to create case');
+    }
+    const json = await res.json();
+    const created = json.case;
+    setCases((prev) => [created, ...prev]);
+    setActiveCase(created);
+
+    // Notify backend detector of active case
+    fetch(`${API_BASE}/api/detector/active-case`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ case_id: created.case_id }),
+    }).catch(() => {});
+  };
+
+  const handleCollectSnapshot = async () => {
+    if (!activeCase) return;
+    try {
+      setIsCollectingSnapshot(true);
+      const res = await fetch(`${API_BASE}/api/cases/${activeCase.case_id}/snapshot`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        alert('✓ RFC 3227 Live Evidence Snapshot collected, hashed, and logged to custody.');
+        fetchEvents();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`❌ Snapshot failed: ${err.message || 'Error'}`);
+      }
+    } catch (e) {
+      alert(`❌ Snapshot failed: ${e.message}`);
+    } finally {
+      setIsCollectingSnapshot(false);
+    }
+  };
+
+  const handleVerifyIntegrity = async () => {
+    if (!activeCase) return;
+    try {
+      setIsVerifyingIntegrity(true);
+      setActiveTab('evidence');
+    } finally {
+      setIsVerifyingIntegrity(false);
     }
   };
 
@@ -421,7 +542,7 @@ export default function App() {
             <Shield size={24} />
             WiFi Risk Detector
           </h1>
-          <p className="header-sub">Ethical VAPT Lab Environment · Real Detection + Simulation</p>
+          <p className="header-sub">Digital Forensics & Incident Response (DFIR) Platform · Real Detection + Forensic Triage</p>
         </div>
         <div className="header-right">
           {lastUpdated && (
@@ -442,168 +563,313 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Mode Banner ── */}
-      <ModeBanner
-        mode={data.mode}
-        activeScenario={data.active_scenario}
-        demoMode={data.demo_mode}
-        platform={data.platform}
-        sniffActive={data.arp_sniff_active}
+      {/* ── Case Bar (Slim Bar Under Header) ── */}
+      <CaseBar
+        activeCase={activeCase}
+        cases={cases}
+        onSelectCase={(c) => {
+          setActiveCase(c);
+          fetch(`${API_BASE}/api/detector/active-case`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ case_id: c.case_id }),
+          }).catch(() => {});
+        }}
+        onOpenNewCaseModal={() => setIsNewCaseModalOpen(true)}
+        onCollectSnapshot={handleCollectSnapshot}
+        onVerifyIntegrity={handleVerifyIntegrity}
+        isCollectingSnapshot={isCollectingSnapshot}
+        isVerifying={isVerifyingIntegrity}
       />
 
-      {/* ── Stats bar ── */}
-      <StatsBar stats={stats} />
+      {/* ── New Case Creation Modal ── */}
+      <NewCaseModal
+        isOpen={isNewCaseModalOpen}
+        onClose={() => setIsNewCaseModalOpen(false)}
+        onCreateCase={handleCreateCase}
+      />
 
-      {/* ── Capture Upload Panel ── */}
-      <section className="card upload-section" style={{ marginBottom: '1.25rem' }}>
-        <h2 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-blue)' }}>
-          <Settings size={17} />
-          Analyze Real Capture Session (Airodump-ng / Wireshark)
-        </h2>
-        
-        <div className="upload-container" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
-          {/* CSV File Input */}
-          <div className="upload-box" style={{ flex: 1, minWidth: '240px' }}>
-            <label style={{ display: 'block', fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Airodump-ng CSV Scan
-            </label>
-            <input
-              type="file"
-              accept=".csv"
-              disabled={analyzing}
-              onChange={(e) => handleFileUpload(e, '/api/upload/airodump-csv')}
-              style={{
-                width: '100%',
-                fontSize: '0.82rem',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '6px 10px',
+      {/* ── DFIR Tab Strip ── */}
+      <nav className="tab-strip" aria-label="Investigation Navigation">
+        <button
+          className={`tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+          onClick={() => setActiveTab('dashboard')}
+        >
+          <Activity size={15} />
+          <span>Dashboard</span>
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'triage' ? 'active' : ''}`}
+          onClick={() => setActiveTab('triage')}
+        >
+          <Radio size={15} />
+          <span>Live Triage</span>
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'timeline' ? 'active' : ''}`}
+          onClick={() => setActiveTab('timeline')}
+        >
+          <Clock size={15} />
+          <span>Timeline</span>
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'evidence' ? 'active' : ''}`}
+          onClick={() => setActiveTab('evidence')}
+        >
+          <ShieldCheck size={15} />
+          <span>Evidence & Custody</span>
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'iocs' ? 'active' : ''}`}
+          onClick={() => setActiveTab('iocs')}
+        >
+          <Settings size={15} />
+          <span>IOCs</span>
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'attack' ? 'active' : ''}`}
+          onClick={() => setActiveTab('attack')}
+        >
+          <ShieldAlert size={15} />
+          <span>ATT&CK Matrix</span>
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
+          onClick={() => setActiveTab('reports')}
+        >
+          <Bell size={15} />
+          <span>Reports</span>
+        </button>
+      </nav>
+
+      {/* ── Tab: Dashboard (Original Page Preserved Unchanged + FindingsSummary) ── */}
+      {activeTab === 'dashboard' && (
+        <>
+          {/* ── Mode Banner ── */}
+          <ModeBanner
+            mode={data.mode}
+            activeScenario={data.active_scenario}
+            demoMode={data.demo_mode}
+            platform={data.platform}
+            sniffActive={data.arp_sniff_active}
+          />
+
+          {/* ── Stats bar ── */}
+          <StatsBar stats={stats} />
+
+          {/* ── Capture Upload Panel ── */}
+          <section className="card upload-section" style={{ marginBottom: '1.25rem' }}>
+            <h2 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-blue)' }}>
+              <Settings size={17} />
+              Analyze Real Capture Session (Airodump-ng / Wireshark)
+            </h2>
+            
+            <div className="upload-container" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
+              {/* CSV File Input */}
+              <div className="upload-box" style={{ flex: 1, minWidth: '240px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                  Airodump-ng CSV Scan
+                </label>
+                <input
+                  type="file"
+                  accept=".csv"
+                  disabled={analyzing}
+                  onChange={(e) => handleFileUpload(e, '/api/upload/airodump-csv')}
+                  style={{
+                    width: '100%',
+                    fontSize: '0.82rem',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '6px 10px',
+                    color: 'var(--text-primary)',
+                    cursor: analyzing ? 'not-allowed' : 'pointer'
+                  }}
+                />
+              </div>
+
+              {/* PCAP File Input */}
+              <div className="upload-box" style={{ flex: 1, minWidth: '240px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                  Wireshark/Airodump PCAP/CAP
+                </label>
+                <input
+                  type="file"
+                  accept=".pcap,.cap,.pcapng"
+                  disabled={analyzing}
+                  onChange={(e) => handleFileUpload(e, '/api/upload/pcap')}
+                  style={{
+                    width: '100%',
+                    fontSize: '0.82rem',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '6px 10px',
+                    color: 'var(--text-primary)',
+                    cursor: analyzing ? 'not-allowed' : 'pointer'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Status and Error messages */}
+            {analyzing && (
+              <div style={{ marginTop: '10px', fontSize: '0.85rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Activity size={14} className="pulse" />
+                Analyzing capture…
+              </div>
+            )}
+
+            {uploadError && (
+              <div style={{ marginTop: '10px', fontSize: '0.85rem', color: 'var(--risk-high)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <AlertTriangle size={14} />
+                Error: {uploadError}
+              </div>
+            )}
+
+            {/* Summary Line */}
+            {data.capture_analysis && (
+              <div style={{
+                marginTop: '12px',
+                paddingTop: '10px',
+                borderTop: '1px solid var(--border-color)',
+                fontSize: '0.85rem',
                 color: 'var(--text-primary)',
-                cursor: analyzing ? 'not-allowed' : 'pointer'
-              }}
-            />
-          </div>
-
-          {/* PCAP File Input */}
-          <div className="upload-box" style={{ flex: 1, minWidth: '240px' }}>
-            <label style={{ display: 'block', fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Wireshark/Airodump PCAP/CAP
-            </label>
-            <input
-              type="file"
-              accept=".pcap,.cap,.pcapng"
-              disabled={analyzing}
-              onChange={(e) => handleFileUpload(e, '/api/upload/pcap')}
-              style={{
-                width: '100%',
-                fontSize: '0.82rem',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '6px 10px',
-                color: 'var(--text-primary)',
-                cursor: analyzing ? 'not-allowed' : 'pointer'
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Status and Error messages */}
-        {analyzing && (
-          <div style={{ marginTop: '10px', fontSize: '0.85rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Activity size={14} className="pulse" />
-            Analyzing capture…
-          </div>
-        )}
-
-        {uploadError && (
-          <div style={{ marginTop: '10px', fontSize: '0.85rem', color: 'var(--risk-high)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <AlertTriangle size={14} />
-            Error: {uploadError}
-          </div>
-        )}
-
-        {/* Summary Line */}
-        {data.capture_analysis && (
-          <div style={{
-            marginTop: '12px',
-            paddingTop: '10px',
-            borderTop: '1px solid var(--border-color)',
-            fontSize: '0.85rem',
-            color: 'var(--text-primary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            flexWrap: 'wrap'
-          }}>
-            <CheckCircle2 size={15} color="var(--risk-low)" />
-            <span>
-              <strong>Capture Analysis Active:</strong> Source: <code>{data.capture_analysis.source}</code>
-            </span>
-            <span style={{ color: 'var(--text-muted)' }}>|</span>
-            <span>
-              Risk Score Contribution: <strong style={{ color: getRiskColor(data.capture_analysis.score) }}>+{data.capture_analysis.score}</strong>
-            </span>
-            <span style={{ color: 'var(--text-muted)' }}>|</span>
-            <span>
-              APs Found: <strong>{data.capture_analysis.result?.networks?.length || 0}</strong>
-            </span>
-            {data.capture_analysis.result?.packet_count > 0 && (
-              <>
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                flexWrap: 'wrap'
+              }}>
+                <CheckCircle2 size={15} color="var(--risk-low)" />
+                <span>
+                  <strong>Capture Analysis Active:</strong> Source: <code>{data.capture_analysis.source}</code>
+                </span>
                 <span style={{ color: 'var(--text-muted)' }}>|</span>
                 <span>
-                  Packets Analyzed: <strong>{data.capture_analysis.result.packet_count}</strong>
+                  Risk Score Contribution: <strong style={{ color: getRiskColor(data.capture_analysis.score) }}>+{data.capture_analysis.score}</strong>
                 </span>
-              </>
+                <span style={{ color: 'var(--text-muted)' }}>|</span>
+                <span>
+                  APs Found: <strong>{data.capture_analysis.result?.networks?.length || 0}</strong>
+                </span>
+                {data.capture_analysis.result?.packet_count > 0 && (
+                  <>
+                    <span style={{ color: 'var(--text-muted)' }}>|</span>
+                    <span>
+                      Packets Analyzed: <strong>{data.capture_analysis.result.packet_count}</strong>
+                    </span>
+                  </>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </section>
+          </section>
 
-      {/* ── Main grid ── */}
-      <div className="dashboard-grid">
+          {/* ── Main grid ── */}
+          <div className="dashboard-grid">
+            {/* Col 1: Score + FindingsSummary + Checks */}
+            <div className="col-left">
+              <section className="card risk-section" aria-label="Risk Score">
+                <ScoreRing
+                  liveScore={data.live_risk_score}
+                  simScore={data.sim_risk_score}
+                  mode={data.mode}
+                />
+                <div className="risk-label">Overall Risk Score</div>
+              </section>
 
-        {/* Col 1: Score + Checks */}
-        <div className="col-left">
-          <section className="card risk-section" aria-label="Risk Score">
-            <ScoreRing
-              liveScore={data.live_risk_score}
-              simScore={data.sim_risk_score}
-              mode={data.mode}
+              {/* Added Findings (Severity x Confidence) Card */}
+              <FindingsSummary events={events} onNavigateTab={setActiveTab} />
+
+              <section className="card" aria-label="Detection Checks">
+                <h2 className="card-title">
+                  <CheckCircle2 size={17} color="var(--accent-cyan)" />
+                  Detection Checks
+                </h2>
+                <CheckGrid checkResults={data.check_results} />
+              </section>
+            </div>
+
+            {/* Col 2: Network Info */}
+            <NetworkCard network={data.network} />
+
+            {/* Full-width: Risk History Chart */}
+            <section className="card full-width" aria-label="Risk History Chart">
+              <RiskChart history={history} />
+            </section>
+
+            {/* Full-width: Alerts */}
+            <AlertsPanel
+              liveAlerts={data.live_alerts || []}
+              simAlerts={data.sim_alerts || []}
             />
-            <div className="risk-label">Overall Risk Score</div>
-          </section>
 
-          <section className="card" aria-label="Detection Checks">
-            <h2 className="card-title">
-              <CheckCircle2 size={17} color="var(--accent-cyan)" />
-              Detection Checks
-            </h2>
-            <CheckGrid checkResults={data.check_results} />
-          </section>
-        </div>
+            {/* Full-width: Sim Lab */}
+            <SimPanel
+              activeScenario={data.active_scenario}
+              onTrigger={triggerScenario}
+            />
+          </div>
+        </>
+      )}
 
-        {/* Col 2: Network Info */}
-        <NetworkCard network={data.network} />
-
-        {/* Full-width: Risk History Chart */}
-        <section className="card full-width" aria-label="Risk History Chart">
-          <RiskChart history={history} />
-        </section>
-
-        {/* Full-width: Alerts */}
-        <AlertsPanel
-          liveAlerts={data.live_alerts || []}
-          simAlerts={data.sim_alerts || []}
+      {/* ── Tab: Live Triage ── */}
+      {activeTab === 'triage' && (
+        <LiveTriage
+          activeCase={activeCase}
+          apiBase={API_BASE}
+          onAddNoteToCase={async (cid, content) => {
+            await fetch(`${API_BASE}/api/cases/${cid}/notes`, {
+              method: 'POST',
+              headers: authHeaders(),
+              body: JSON.stringify({ content, author: activeCase?.examiner || 'Analyst' }),
+            });
+            fetchEvents();
+          }}
         />
+      )}
 
-        {/* Full-width: Sim Lab */}
-        <SimPanel
-          activeScenario={data.active_scenario}
-          onTrigger={triggerScenario}
+      {/* ── Tab: Timeline & Correlations ── */}
+      {activeTab === 'timeline' && (
+        <TimelineView
+          activeCase={activeCase}
+          apiBase={API_BASE}
+          apiToken={API_TOKEN}
         />
-      </div>
+      )}
+
+      {/* ── Tab: Evidence & Custody ── */}
+      {activeTab === 'evidence' && (
+        <EvidencePanel
+          activeCase={activeCase}
+          apiBase={API_BASE}
+          onVerifyIntegrity={handleVerifyIntegrity}
+          isVerifying={isVerifyingIntegrity}
+        />
+      )}
+
+      {/* ── Tab: IOCs & Threat Intel ── */}
+      {activeTab === 'iocs' && (
+        <IocTable
+          activeCase={activeCase}
+          apiBase={API_BASE}
+        />
+      )}
+
+      {/* ── Tab: MITRE ATT&CK Matrix ── */}
+      {activeTab === 'attack' && (
+        <AttackMatrix
+          activeCase={activeCase}
+          apiBase={API_BASE}
+        />
+      )}
+
+      {/* ── Tab: Reports ── */}
+      {activeTab === 'reports' && (
+        <ReportsPanel
+          activeCase={activeCase}
+          apiBase={API_BASE}
+        />
+      )}
     </div>
   );
 }
